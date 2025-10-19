@@ -2,6 +2,7 @@
 
 import { useState } from 'react'
 import Link from 'next/link'
+import Image from 'next/image'
 import { usePathname, useRouter } from 'next/navigation'
 import { motion, AnimatePresence } from 'framer-motion'
 import {
@@ -14,7 +15,6 @@ import {
   LogOut,
   ChevronLeft,
   ChevronRight,
-  User,
   Wallet,
   Target,
   Bell,
@@ -86,17 +86,7 @@ export function Sidebar() {
   const [isCollapsed, setIsCollapsed] = useState(false)
   const pathname = usePathname()
   const router = useRouter()
-  const user = useUserStore((state) => state.user)
   const setUser = useUserStore((state) => state.setUser)
-
-  const hasName = typeof user?.full_name === 'string' && user.full_name.trim().length > 0
-  const shortName = hasName
-    ? user!.full_name!.trim().split(' ')[0]
-    : user?.email
-    ? user.email.split('@')[0]
-    : 'Guest'
-  const fullDisplayName = hasName ? user!.full_name!.trim() : shortName
-  const subtitle = user?.email ?? 'Complete your profile'
 
   const handleLogout = async () => {
     await supabase.auth.signOut()
@@ -121,7 +111,7 @@ export function Sidebar() {
         className="hidden lg:flex flex-col fixed left-0 top-0 h-screen glass border-r border-white/10 z-50"
       >
         {/* Header */}
-        <div className="p-6 flex items-center justify-between">
+        <div className="px-6 pt-4 pb-4 mb-2 flex items-center justify-between">
           <AnimatePresence mode="wait">
             {!isCollapsed && (
               <motion.div
@@ -130,14 +120,22 @@ export function Sidebar() {
                 animate={{ opacity: 1, x: 0 }}
                 exit={{ opacity: 0, x: -20 }}
                 transition={{ duration: 0.2 }}
-                className="flex items-center gap-3"
+                className="flex items-center gap-3 -mt-1"
               >
-                <div className="w-10 h-10 rounded-xl gradient-primary flex items-center justify-center shadow-neon">
-                  <span className="text-white font-bold text-xl">T</span>
+                <div className="w-10 h-10 rounded-xl overflow-hidden shadow-neon border border-white/10">
+                  <Image
+                    src="/taalai.png"
+                    alt="TaalAI logo"
+                    width={40}
+                    height={40}
+                    priority
+                    className="w-full h-full object-cover"
+                    style={{ objectPosition: 'center' }}
+                  />
                 </div>
                 <div>
-                  <h1 className="text-lg font-bold text-gradient-primary">TaalAI</h1>
-                  <p className="text-xs text-muted-foreground">Financial Coach</p>
+                  <h1 className="text-lg font-bold text-gradient-primary leading-tight">TaalAI</h1>
+                  <p className="mt-1 text-xs text-muted-foreground">Financial Coach</p>
                 </div>
               </motion.div>
             )}
@@ -153,39 +151,6 @@ export function Sidebar() {
               <ChevronLeft className="w-5 h-5 text-muted-foreground" />
             )}
           </button>
-        </div>
-
-        {/* User Profile */}
-        <div className="px-4 mb-6">
-          <div
-            className={cn(
-              'glass-hover rounded-2xl p-4 cursor-pointer group',
-              isCollapsed && 'p-3'
-            )}
-          >
-            <div className="flex items-center gap-3">
-              <div className="relative">
-                <div className="w-10 h-10 rounded-full gradient-secondary flex items-center justify-center ring-2 ring-sage-500/20">
-                  <User className="w-5 h-5 text-white" />
-                </div>
-                <div className="absolute -bottom-1 -right-1 w-4 h-4 bg-sage-500 rounded-full border-2 border-background" />
-              </div>
-
-              <AnimatePresence mode="wait">
-                {!isCollapsed && (
-                  <motion.div
-                    initial={{ opacity: 0, width: 0 }}
-                    animate={{ opacity: 1, width: 'auto' }}
-                    exit={{ opacity: 0, width: 0 }}
-                    className="flex-1 min-w-0"
-                  >
-                    <p className="font-semibold text-sm truncate capitalize">{fullDisplayName}</p>
-                    <p className="text-xs text-muted-foreground truncate">{subtitle}</p>
-                  </motion.div>
-                )}
-              </AnimatePresence>
-            </div>
-          </div>
         </div>
 
         {/* Navigation */}
