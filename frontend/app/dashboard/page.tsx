@@ -671,7 +671,7 @@ export default function DashboardPage() {
           {/* Overall Progress */}
           <div className="mb-6">
             <div className="flex justify-between text-sm mb-2">
-              <span className="text-muted-foreground">Today's Progress</span>
+              <span className="text-muted-foreground">Today&apos;s Progress</span>
               <span className="font-medium">{habitProgress.toFixed(0)}%</span>
             </div>
             <div className="progress-neuro">
@@ -753,7 +753,7 @@ export default function DashboardPage() {
                 <div>
                   <h4 className="font-semibold text-theme-green">Perfect Day!</h4>
                   <p className="text-sm text-muted-foreground">
-                    You've completed all your habits today. Keep it up!
+                    You&apos;ve completed all your habits today. Keep it up!
                   </p>
                 </div>
               </div>
