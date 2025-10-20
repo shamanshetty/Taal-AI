@@ -1,6 +1,6 @@
 # **TaalAI – AI-Powered Financial Coach for Indians**
 
-![TaalAI Banner](https://via.placeholder.com/1200x300/f97316/ffffff?text=TaalAI+-+Your+Financial+Coach)
+![WhatsApp Image 2025-10-19 at 17 04 22_8750e890](https://github.com/user-attachments/assets/5e9faefd-c697-43af-b070-11031707b663)
 
 **TaalAI** is an agentic AI-powered financial coach designed specifically for Indians with irregular incomes — freelancers, gig workers, and digital creators.  
 It helps users understand their income rhythm, receive personalized financial insights, and make data-driven financial decisions.
