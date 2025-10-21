@@ -498,7 +498,7 @@ const incomeWithProjection = useMemo(() => {
             <Download className="w-3 h-3" />
             <span>Compliance checklist</span>
           </div>
-          <h2 className="text-xl font-semibold">This month&apos;s paperwork</h2>
+          <h2 className="text-xl font-semibold">This month's paperwork</h2>
           <div className="grid gap-3 md:grid-cols-3">
             <div className="rounded-2xl border border-white/10 bg-background/40 p-4 space-y-2">
               <div className="flex items-center gap-2 text-sm font-medium text-foreground">
@@ -506,7 +506,7 @@ const incomeWithProjection = useMemo(() => {
                 Record invoices
               </div>
               <p className="text-xs text-muted-foreground">
-                Upload invoices worth {formatCurrency(165000)} to stay audit-ready. Use the &quot;Scan &amp; Save&quot; shortcut on mobile.
+                Upload invoices worth {formatCurrency(165000)} to stay audit-ready. Use the "Scan &amp; Save" shortcut on mobile.
               </p>
             </div>
             <div className="rounded-2xl border border-white/10 bg-background/40 p-4 space-y-2">

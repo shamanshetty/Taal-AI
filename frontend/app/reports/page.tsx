@@ -45,6 +45,8 @@ interface MonthRecord {
   targetSavings: number
 }
 
+type NumericKeys = Extract<keyof MonthRecord, 'income' | 'expense' | 'savings' | 'budgetedExpense' | 'targetSavings'>
+
 interface CategoryRecord {
   name: string
   value: number
@@ -157,11 +159,11 @@ export default function ReportsPage() {
   const latest = filteredMonths[filteredMonths.length - 1]
   const previous = filteredMonths[filteredMonths.length - 2]
 
-  const getMomentum = (key: keyof MonthRecord, label: string) => {
+  const getMomentum = (key: NumericKeys, label: string) => {
     if (!latest || !previous) {
       return { label, change: 0, direction: 'neutral' as const }
     }
-    const change = latest[key] - previous[key]
+    const change = (latest[key] as number) - (previous[key] as number)
     const direction = change === 0 ? ('neutral' as const) : change > 0 ? ('up' as const) : ('down' as const)
     return { label, change, direction }
   }
