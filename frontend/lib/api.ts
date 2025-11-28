@@ -6,6 +6,7 @@ import type {
   Goal,
   ReceivableHighlight,
   Transaction,
+  TransactionType,
   UpcomingEventItem,
 } from '@/types'
 
@@ -136,6 +137,105 @@ export async function fetchGoals(userId: string, options?: RequestOptions): Prom
   }
 
   return data.map(normalizeGoal)
+}
+
+export interface CreateTransactionPayload {
+  type: TransactionType
+  amount: number
+  currency?: string
+  category?: string
+  subcategory?: string
+  description?: string
+  date: string
+  client_id?: string
+  scheduled_for?: string | null
+  is_recurring?: boolean
+  recurrence_rule?: string
+  gst_eligible?: boolean
+  gst_rate?: number | null
+  ledger_status?: 'unreconciled' | 'pending' | 'cleared'
+  requires_follow_up?: boolean
+  follow_up_reason?: string
+  has_receipt?: boolean
+  tags?: string[]
+  notes?: string
+  source?: string
+}
+
+export async function createTransaction(
+  userId: string,
+  payload: CreateTransactionPayload,
+): Promise<Transaction> {
+  const baseUrl = ensureApiBaseUrl()
+  const url = new URL('/api/transactions', baseUrl)
+  url.searchParams.set('user_id', userId)
+
+  const response = await fetch(url.toString(), {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  })
+
+  const data = await handleResponse(response)
+  return normalizeTransaction(data)
+}
+
+export interface CreateGoalPayload {
+  title: string
+  description?: string
+  category?: string
+  status?: 'active' | 'paused' | 'achieved'
+  priority?: 'high' | 'medium' | 'low'
+  target_amount: number
+  current_amount?: number
+  deadline?: string | null
+  monthly_contribution?: number
+  required_monthly?: number
+  icon_key?: string
+  tags?: string[]
+  notes?: string
+}
+
+export type UpdateGoalPayload = Partial<CreateGoalPayload>
+
+export async function createGoal(userId: string, payload: CreateGoalPayload): Promise<Goal> {
+  const baseUrl = ensureApiBaseUrl()
+  const url = new URL('/api/goals', baseUrl)
+  url.searchParams.set('user_id', userId)
+
+  const response = await fetch(url.toString(), {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  })
+
+  const data = await handleResponse(response)
+  return normalizeGoal(data)
+}
+
+export async function updateGoal(goalId: string, payload: UpdateGoalPayload): Promise<Goal> {
+  const baseUrl = ensureApiBaseUrl()
+  const url = new URL(`/api/goals/${goalId}`, baseUrl)
+
+  const response = await fetch(url.toString(), {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  })
+
+  const data = await handleResponse(response)
+  return normalizeGoal(data)
+}
+
+export async function deleteGoal(goalId: string): Promise<void> {
+  const baseUrl = ensureApiBaseUrl()
+  const url = new URL(`/api/goals/${goalId}`, baseUrl)
+
+  const response = await fetch(url.toString(), {
+    method: 'DELETE',
+  })
+
+  await handleResponse(response)
 }
 
 export async function fetchFinancialPulse(

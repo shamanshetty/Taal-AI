@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useMemo, useState } from 'react'
+import { FormEvent, useEffect, useMemo, useState } from 'react'
 import { motion } from 'framer-motion'
 import {
   TrendingUp,
@@ -26,10 +26,12 @@ import {
   Sparkles,
 } from 'lucide-react'
 
-import { fetchTransactions } from '@/lib/api'
+import { createTransaction, fetchTransactions } from '@/lib/api'
 import { formatCurrency } from '@/lib/utils'
+import { Button } from '@/components/ui/button'
+import { Input } from '@/components/ui/input'
 import { useUserStore } from '@/store/useUserStore'
-import type { Transaction as AppTransaction } from '@/types'
+import type { Transaction as AppTransaction, TransactionType } from '@/types'
 
 const PLACEHOLDER = '__'
 
@@ -51,6 +53,46 @@ type DisplayTransaction = AppTransaction & {
   note?: string
   tags?: string[]
 }
+
+type TransactionComposerState = {
+  type: TransactionType
+  amount: string
+  currency: string
+  description: string
+  category: string
+  subcategory: string
+  date: string
+  scheduleType: 'none' | 'scheduled'
+  scheduledDate: string
+  ledgerStatus: 'unreconciled' | 'pending' | 'cleared'
+  gstEligible: boolean
+  hasReceipt: boolean
+  requiresFollowUp: boolean
+  followUpReason: string
+  tags: string
+  notes: string
+  source: string
+}
+
+const createTransactionComposerState = (): TransactionComposerState => ({
+  type: 'expense',
+  amount: '',
+  currency: 'INR',
+  description: '',
+  category: '',
+  subcategory: '',
+  date: new Date().toISOString().split('T')[0],
+  scheduleType: 'none',
+  scheduledDate: '',
+  ledgerStatus: 'unreconciled',
+  gstEligible: false,
+  hasReceipt: false,
+  requiresFollowUp: false,
+  followUpReason: '',
+  tags: '',
+  notes: '',
+  source: '',
+})
 
 function groupByDate(transactions: DisplayTransaction[]) {
   const map = new Map<string, DisplayTransaction[]>()
@@ -203,10 +245,93 @@ export default function TransactionsPage() {
   const [savedView, setSavedView] = useState('default')
   const [isFetchingData, setIsFetchingData] = useState(false)
   const [fetchError, setFetchError] = useState<string | null>(null)
+  const [isComposerOpen, setIsComposerOpen] = useState(false)
+  const [transactionComposer, setTransactionComposer] = useState<TransactionComposerState>(
+    createTransactionComposerState()
+  )
+  const [isSubmittingComposer, setIsSubmittingComposer] = useState(false)
+  const [composerError, setComposerError] = useState<string | null>(null)
+  const [composerFeedback, setComposerFeedback] = useState<string | null>(null)
 
   const user = useUserStore((state) => state.user)
   const storeTransactions = useUserStore((state) => state.transactions)
   const setTransactions = useUserStore((state) => state.setTransactions)
+
+  const resetTransactionComposer = () => {
+    setTransactionComposer(createTransactionComposerState())
+    setComposerError(null)
+    setComposerFeedback(null)
+  }
+
+  const handleComposerChange = (field: keyof TransactionComposerState, value: string | boolean) => {
+    setTransactionComposer((prev) => ({ ...prev, [field]: value }))
+  }
+
+  const handleComposerSubmit = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault()
+    if (!user?.id) {
+      setComposerError('Sign in to manage transactions.')
+      return
+    }
+
+    const amountValue = Number(transactionComposer.amount)
+    if (!amountValue || Number.isNaN(amountValue) || amountValue <= 0) {
+      setComposerError('Add a valid amount greater than zero.')
+      return
+    }
+    if (!transactionComposer.date) {
+      setComposerError('Pick a booking date for this transaction.')
+      return
+    }
+
+    setComposerError(null)
+    setComposerFeedback(null)
+    setIsSubmittingComposer(true)
+
+    try {
+      const payload = {
+        type: transactionComposer.type,
+        amount: amountValue,
+        currency: transactionComposer.currency?.trim() || 'INR',
+        description: transactionComposer.description || undefined,
+        category: transactionComposer.category || undefined,
+        subcategory: transactionComposer.subcategory || undefined,
+        date: transactionComposer.date,
+        ledger_status: transactionComposer.ledgerStatus,
+        gst_eligible: transactionComposer.gstEligible,
+        has_receipt: transactionComposer.hasReceipt,
+        requires_follow_up: transactionComposer.requiresFollowUp,
+        follow_up_reason:
+          transactionComposer.requiresFollowUp && transactionComposer.followUpReason
+            ? transactionComposer.followUpReason
+            : undefined,
+        notes: transactionComposer.notes || undefined,
+        source: transactionComposer.source || undefined,
+      } as Parameters<typeof createTransaction>[1]
+
+      if (transactionComposer.scheduleType === 'scheduled' && transactionComposer.scheduledDate) {
+        payload.scheduled_for = transactionComposer.scheduledDate
+      }
+
+      const preparedTags = transactionComposer.tags
+        .split(',')
+        .map((tag) => tag.trim())
+        .filter(Boolean)
+      if (preparedTags.length) {
+        payload.tags = preparedTags
+      }
+
+      const created = await createTransaction(user.id, payload)
+      setTransactions([created, ...storeTransactions])
+      setComposerFeedback('Transaction added successfully.')
+      setIsComposerOpen(false)
+      resetTransactionComposer()
+    } catch (error) {
+      setComposerError(error instanceof Error ? error.message : 'Failed to add this transaction.')
+    } finally {
+      setIsSubmittingComposer(false)
+    }
+  }
 
   useEffect(() => {
     if (!user?.id) return
@@ -375,6 +500,11 @@ export default function TransactionsPage() {
         {isFetchingData && !fetchError && (
           <div className="rounded-2xl border border-white/5 bg-white/5 px-4 py-2 text-sm text-muted-foreground">
             Syncing your latest transactions...
+          </div>
+        )}
+        {composerFeedback && (
+          <div className="rounded-2xl border border-theme-green/20 bg-theme-green/10 px-4 py-2 text-sm text-theme-green">
+            {composerFeedback}
           </div>
         )}
 
@@ -564,6 +694,11 @@ export default function TransactionsPage() {
                   </button>
                 </div>
               </div>
+            </div>
+            <div className="flex items-center justify-start xl:justify-end">
+              <Button onClick={() => setIsComposerOpen(true)} className="w-full md:w-auto">
+                Add transaction
+              </Button>
             </div>
           </div>
         </motion.div>
@@ -780,6 +915,232 @@ export default function TransactionsPage() {
           </div>
         </motion.div>
       </div>
+      {isComposerOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm p-4">
+          <div className="relative w-full max-w-2xl max-h-[90vh] overflow-y-auto rounded-3xl border border-white/10 bg-background p-6 shadow-2xl">
+            <div className="flex items-center justify-between mb-4">
+              <div>
+                <h2 className="text-xl font-semibold">Log a transaction</h2>
+                <p className="text-sm text-muted-foreground">Capture past expenses, future inflows, or anything missing from the ledger.</p>
+              </div>
+              <Button type="button" variant="ghost" onClick={() => setIsComposerOpen(false)}>
+                Close
+              </Button>
+            </div>
+
+            {composerError && (
+              <div className="mb-4 rounded-2xl border border-red-400/40 bg-red-500/10 px-4 py-2 text-sm text-red-300">
+                {composerError}
+              </div>
+            )}
+
+            <form className="space-y-6" onSubmit={handleComposerSubmit}>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div>
+                  <label className="text-sm font-medium text-muted-foreground mb-2 block">Amount</label>
+                  <Input
+                    type="number"
+                    min="0"
+                    step="0.01"
+                    value={transactionComposer.amount}
+                    onChange={(event) => handleComposerChange('amount', event.target.value)}
+                    placeholder="Enter amount in INR"
+                    required
+                  />
+                </div>
+                <div>
+                  <label className="text-sm font-medium text-muted-foreground mb-2 block">Currency</label>
+                  <Input
+                    value={transactionComposer.currency}
+                    onChange={(event) => handleComposerChange('currency', event.target.value.toUpperCase())}
+                    placeholder="INR"
+                  />
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div>
+                  <label className="text-sm font-medium text-muted-foreground mb-2 block">Type</label>
+                  <div className="flex flex-wrap gap-2">
+                    {(['expense', 'income', 'transfer'] as TransactionType[]).map((typeOption) => (
+                      <button
+                        key={typeOption}
+                        type="button"
+                        onClick={() => handleComposerChange('type', typeOption)}
+                        className={`px-4 py-2 rounded-full border text-sm ${
+                          transactionComposer.type === typeOption
+                            ? 'border-theme-green text-theme-green'
+                            : 'border-white/10 text-muted-foreground'
+                        }`}
+                      >
+                        {typeOption.charAt(0).toUpperCase() + typeOption.slice(1)}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+                <div>
+                  <label className="text-sm font-medium text-muted-foreground mb-2 block">Ledger status</label>
+                  <select
+                    value={transactionComposer.ledgerStatus}
+                    onChange={(event) => handleComposerChange('ledgerStatus', event.target.value)}
+                    className="w-full rounded-2xl border border-white/10 bg-transparent px-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-theme-green/40"
+                  >
+                    <option value="unreconciled">Unreconciled</option>
+                    <option value="pending">Pending</option>
+                    <option value="cleared">Cleared</option>
+                  </select>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div>
+                  <label className="text-sm font-medium text-muted-foreground mb-2 block">Description</label>
+                  <Input
+                    value={transactionComposer.description}
+                    onChange={(event) => handleComposerChange('description', event.target.value)}
+                    placeholder="Koramangala studio lease"
+                  />
+                </div>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                  <div>
+                    <label className="text-sm font-medium text-muted-foreground mb-2 block">Category</label>
+                    <Input
+                      value={transactionComposer.category}
+                      onChange={(event) => handleComposerChange('category', event.target.value)}
+                      placeholder="Workspace"
+                    />
+                  </div>
+                  <div>
+                    <label className="text-sm font-medium text-muted-foreground mb-2 block">Sub-category</label>
+                    <Input
+                      value={transactionComposer.subcategory}
+                      onChange={(event) => handleComposerChange('subcategory', event.target.value)}
+                      placeholder="Lease"
+                    />
+                  </div>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div>
+                  <label className="text-sm font-medium text-muted-foreground mb-2 block">Booking date</label>
+                  <Input
+                    type="date"
+                    value={transactionComposer.date}
+                    onChange={(event) => handleComposerChange('date', event.target.value)}
+                    required
+                  />
+                </div>
+                <div>
+                  <label className="text-sm font-medium text-muted-foreground mb-2 block">When does this hit?</label>
+                  <div className="space-y-2 text-sm">
+                    <label className="flex items-center gap-2">
+                      <input
+                        type="radio"
+                        name="scheduleType"
+                        value="none"
+                        checked={transactionComposer.scheduleType === 'none'}
+                        onChange={() => handleComposerChange('scheduleType', 'none')}
+                      />
+                      Post it immediately
+                    </label>
+                    <label className="flex items-center gap-2">
+                      <input
+                        type="radio"
+                        name="scheduleType"
+                        value="scheduled"
+                        checked={transactionComposer.scheduleType === 'scheduled'}
+                        onChange={() => handleComposerChange('scheduleType', 'scheduled')}
+                      />
+                      Schedule for later
+                    </label>
+                  </div>
+                  {transactionComposer.scheduleType === 'scheduled' && (
+                    <Input
+                      className="mt-2"
+                      type="date"
+                      value={transactionComposer.scheduledDate}
+                      onChange={(event) => handleComposerChange('scheduledDate', event.target.value)}
+                      required
+                    />
+                  )}
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div className="space-y-2">
+                  <label className="text-sm font-medium text-muted-foreground block">Tags (comma separated)</label>
+                  <Input
+                    value={transactionComposer.tags}
+                    onChange={(event) => handleComposerChange('tags', event.target.value)}
+                    placeholder="subscription, gst"
+                  />
+                  <label className="text-sm font-medium text-muted-foreground block">Source</label>
+                  <Input
+                    value={transactionComposer.source}
+                    onChange={(event) => handleComposerChange('source', event.target.value)}
+                    placeholder="UPI / Card / Client"
+                  />
+                </div>
+                <div className="space-y-2">
+                  <label className="text-sm font-medium text-muted-foreground block">Notes &amp; reminders</label>
+                  <textarea
+                    value={transactionComposer.notes}
+                    onChange={(event) => handleComposerChange('notes', event.target.value)}
+                    className="w-full rounded-2xl border border-white/10 bg-transparent px-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-theme-green/40"
+                    rows={4}
+                    placeholder="Add receipt link, payment instructions, or internal reminder."
+                  />
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div className="flex flex-col gap-2 text-sm text-muted-foreground">
+                  <label className="flex items-center gap-2 font-medium text-foreground">
+                    <input
+                      type="checkbox"
+                      checked={transactionComposer.gstEligible}
+                      onChange={(event) => handleComposerChange('gstEligible', event.target.checked)}
+                    />
+                    GST eligible
+                  </label>
+                  <label className="flex items-center gap-2 font-medium text-foreground">
+                    <input
+                      type="checkbox"
+                      checked={transactionComposer.hasReceipt}
+                      onChange={(event) => handleComposerChange('hasReceipt', event.target.checked)}
+                    />
+                    Receipt already attached
+                  </label>
+                  <label className="flex items-center gap-2 font-medium text-foreground">
+                    <input
+                      type="checkbox"
+                      checked={transactionComposer.requiresFollowUp}
+                      onChange={(event) => handleComposerChange('requiresFollowUp', event.target.checked)}
+                    />
+                    Needs follow-up
+                  </label>
+                  {transactionComposer.requiresFollowUp && (
+                    <Input
+                      value={transactionComposer.followUpReason}
+                      onChange={(event) => handleComposerChange('followUpReason', event.target.value)}
+                      placeholder="Why do we need to follow up?"
+                    />
+                  )}
+                </div>
+                <div className="flex items-end gap-3">
+                  <Button type="submit" disabled={isSubmittingComposer} className="flex-1">
+                    {isSubmittingComposer ? 'Saving...' : 'Save transaction'}
+                  </Button>
+                  <Button type="button" variant="ghost" onClick={resetTransactionComposer}>
+                    Clear
+                  </Button>
+                </div>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
     </div>
   )
 }

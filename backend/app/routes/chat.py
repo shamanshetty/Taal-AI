@@ -1,42 +1,46 @@
-from fastapi import APIRouter, HTTPException, Query
-from app.models.schemas import ChatRequest, ChatResponse
-from app.agents.coach_agent import CoachAgent
 from datetime import datetime
+
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query
+from sqlalchemy.orm import Session
+
+from app.agents.coach_agent import CoachAgent
+from app.agents.langgraph_router import invoke_chat, schedule_memory_persist
+from app.db import get_db
+from app.models.schemas import ChatRequest, ChatResponse
 
 router = APIRouter()
 coach = CoachAgent()
 
+
 @router.post("/message", response_model=ChatResponse)
-async def send_message(request: ChatRequest, user_id: str = Query(...)):
-    """Send a message to the AI coach"""
+async def send_message(
+    request: ChatRequest,
+    background_tasks: BackgroundTasks,
+    user_id: str = Query(...),
+    db: Session = Depends(get_db),
+):
+    """Send a message to the AI coach via LangGraph."""
     try:
-        # TODO: Fetch user context from database
-        context = {
-            "pulse_score": 75,
-            "avg_income": 50000,
-            "avg_expense": 30000,
-            "volatility": 0.15
-        }
-
-        response_text = coach.generate_advice(
-            user_message=request.message,
-            context=context,
-            language=request.language
+        response_text, final_messages = invoke_chat(
+            request.message,
+            request.history,
+            user_id=user_id,
+            db=db,
         )
+        schedule_memory_persist(background_tasks, user_id, final_messages)
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
 
-        # TODO: If use_voice is True, generate audio using TTS
-        audio_url = None
-        if request.use_voice:
-            # audio_url = await generate_tts(response_text, request.language)
-            pass
+    audio_url = None
+    if request.use_voice:
+        # Placeholder for future TTS integration.
+        pass
 
-        return {
-            "response": response_text,
-            "audio_url": audio_url,
-            "timestamp": datetime.now()
-        }
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+    return {
+        "response": response_text,
+        "audio_url": audio_url,
+        "timestamp": datetime.now(),
+    }
 
 @router.get("/daily-nudge")
 async def get_daily_nudge(user_id: str = Query(...)):

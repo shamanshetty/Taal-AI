@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useMemo, useState } from 'react'
+import { FormEvent, useEffect, useMemo, useState } from 'react'
 import { motion } from 'framer-motion'
 import type { LucideIcon } from 'lucide-react'
 import {
@@ -19,7 +19,9 @@ import {
   SlidersHorizontal,
 } from 'lucide-react'
 import { formatCurrency } from '@/lib/utils'
-import { fetchGoals } from '@/lib/api'
+import { createGoal, fetchGoals, updateGoal } from '@/lib/api'
+import { Button } from '@/components/ui/button'
+import { Input } from '@/components/ui/input'
 import { useUserStore } from '@/store/useUserStore'
 import type { Goal as StoreGoal } from '@/types'
 
@@ -53,6 +55,30 @@ const GOAL_ICON_MAP: Record<string, LucideIcon> = {
   education: GraduationCap,
   tool: GraduationCap,
 }
+
+type GoalComposerState = {
+  title: string
+  category: string
+  targetAmount: string
+  deadline: string
+  priority: 'high' | 'medium' | 'low'
+  monthlyContribution: string
+  notes: string
+  tags: string
+  status: GoalStatus
+}
+
+const createGoalComposerState = (): GoalComposerState => ({
+  title: '',
+  category: '',
+  targetAmount: '',
+  deadline: '',
+  priority: 'medium',
+  monthlyContribution: '',
+  notes: '',
+  tags: '',
+  status: 'active',
+})
 
 const parseDeadline = (value?: string | null): Date | null => {
   if (!value) return null
@@ -193,6 +219,102 @@ export default function GoalsPage() {
   const [savedView, setSavedView] = useState('balance')
   const [isFetchingData, setIsFetchingData] = useState(false)
   const [fetchError, setFetchError] = useState<string | null>(null)
+  const updateGoalInStore = useUserStore((state) => state.updateGoal)
+  const [isGoalComposerOpen, setIsGoalComposerOpen] = useState(false)
+  const [goalComposer, setGoalComposer] = useState<GoalComposerState>(createGoalComposerState())
+  const [isSavingGoal, setIsSavingGoal] = useState(false)
+  const [goalComposerError, setGoalComposerError] = useState<string | null>(null)
+  const [goalComposerFeedback, setGoalComposerFeedback] = useState<string | null>(null)
+  const [goalActionBusy, setGoalActionBusy] = useState<string | null>(null)
+
+  const resetGoalComposer = () => {
+    setGoalComposer(createGoalComposerState())
+    setGoalComposerError(null)
+    setGoalComposerFeedback(null)
+  }
+
+  const handleGoalComposerChange = (field: keyof GoalComposerState, value: string) => {
+    setGoalComposer((prev) => ({ ...prev, [field]: value }))
+  }
+
+  const handleGoalSubmit = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault()
+    if (!user?.id) {
+      setGoalComposerError('Sign in to manage goals.')
+      return
+    }
+
+    const amountValue = Number(goalComposer.targetAmount)
+    if (!goalComposer.title.trim()) {
+      setGoalComposerError('Give this goal a name so we can track it together.')
+      return
+    }
+    if (!amountValue || Number.isNaN(amountValue) || amountValue <= 0) {
+      setGoalComposerError('Target amount should be greater than zero.')
+      return
+    }
+
+    setGoalComposerError(null)
+    setGoalComposerFeedback(null)
+    setIsSavingGoal(true)
+
+    try {
+      const parsedDeadline = goalComposer.deadline ? new Date(goalComposer.deadline) : null
+      const payload = {
+        title: goalComposer.title.trim(),
+        category: goalComposer.category || undefined,
+        status: goalComposer.status,
+        priority: goalComposer.priority,
+        target_amount: amountValue,
+        current_amount: 0,
+        deadline: goalComposer.deadline || undefined,
+        monthly_contribution: goalComposer.monthlyContribution
+          ? Number(goalComposer.monthlyContribution)
+          : undefined,
+        notes: goalComposer.notes || undefined,
+      } as Parameters<typeof createGoal>[1]
+
+      if (parsedDeadline && !goalComposer.monthlyContribution) {
+        const monthsRemaining = getMonthsRemaining(parsedDeadline)
+        payload.required_monthly = Math.ceil(amountValue / Math.max(monthsRemaining, 1))
+      } else if (goalComposer.monthlyContribution) {
+        payload.required_monthly = Number(goalComposer.monthlyContribution)
+      }
+
+      const preparedTags = goalComposer.tags
+        .split(',')
+        .map((tag) => tag.trim())
+        .filter(Boolean)
+      if (preparedTags.length) {
+        payload.tags = preparedTags
+      }
+
+      const created = await createGoal(user.id, payload)
+      setStoreGoals([created, ...storeGoals])
+      setGoalComposerFeedback(`Goal “${created.title}” added.`)
+      setIsGoalComposerOpen(false)
+      resetGoalComposer()
+    } catch (error) {
+      setGoalComposerError(error instanceof Error ? error.message : 'Unable to save this goal.')
+    } finally {
+      setIsSavingGoal(false)
+    }
+  }
+
+  const handleGoalStatusChange = async (goalId: string, status: GoalStatus) => {
+    if (!status) return
+    setGoalComposerError(null)
+    setGoalActionBusy(goalId)
+    try {
+      const updated = await updateGoal(goalId, { status })
+      updateGoalInStore(goalId, updated)
+      setGoalComposerFeedback(`Goal status updated to ${status}.`)
+    } catch (error) {
+      setGoalComposerError(error instanceof Error ? error.message : 'Unable to update status.')
+    } finally {
+      setGoalActionBusy(null)
+    }
+  }
 
   useEffect(() => {
     if (!user?.id) return
@@ -469,6 +591,11 @@ export default function GoalsPage() {
         {isFetchingData && !fetchError && (
           <div className="rounded-2xl border border-white/5 bg-white/5 px-4 py-2 text-sm text-muted-foreground">
             Syncing your latest goals...
+          </div>
+        )}
+        {goalComposerFeedback && (
+          <div className="rounded-2xl border border-theme-green/20 bg-theme-green/10 px-4 py-2 text-sm text-theme-green">
+            {goalComposerFeedback}
           </div>
         )}
 
@@ -765,7 +892,11 @@ export default function GoalsPage() {
                 ))}
               </select>
             </div>
-            <button className="neuro-button text-xs flex items-center gap-2 text-theme-green">
+            <button
+              type="button"
+              onClick={() => setIsGoalComposerOpen(true)}
+              className="neuro-button text-xs flex items-center gap-2 text-theme-green"
+            >
               <Plus className="w-4 h-4" />
               New goal
             </button>
@@ -953,20 +1084,34 @@ export default function GoalsPage() {
                             </div>
                           </div>
                         </div>
-                        <div
-                          className={`px-3 py-1 rounded-full text-xs font-medium ${
-                            goal.status === 'achieved'
-                              ? 'bg-theme-green/20 text-theme-green'
+                        <div className="flex flex-col items-end gap-2">
+                          <div
+                            className={`px-3 py-1 rounded-full text-xs font-medium ${
+                              goal.status === 'achieved'
+                                ? 'bg-theme-green/20 text-theme-green'
+                                : onTrack
+                                  ? 'bg-theme-gold/20 text-theme-gold'
+                                  : 'bg-destructive/20 text-destructive'
+                            }`}
+                          >
+                            {goal.status === 'achieved'
+                              ? 'Achieved'
                               : onTrack
-                                ? 'bg-theme-gold/20 text-theme-gold'
-                                : 'bg-destructive/20 text-destructive'
-                          }`}
-                        >
-                          {goal.status === 'achieved'
-                            ? 'Achieved'
-                            : onTrack
-                              ? 'On Track'
-                              : 'At Risk'}
+                                ? 'On Track'
+                                : 'At Risk'}
+                          </div>
+                          <select
+                            value={goal.status}
+                            onChange={(event) =>
+                              handleGoalStatusChange(goal.id, event.target.value as GoalStatus)
+                            }
+                            disabled={goalActionBusy === goal.id}
+                            className="text-xs rounded-full border border-white/10 bg-transparent px-3 py-1 focus:outline-none focus:ring-2 focus:ring-theme-green/40"
+                          >
+                            <option value="active">Mark active</option>
+                            <option value="paused">Pause</option>
+                            <option value="achieved">Mark achieved</option>
+                          </select>
                         </div>
                       </div>
 
@@ -1007,6 +1152,140 @@ export default function GoalsPage() {
           ) : null
         )}
       </div>
+      {isGoalComposerOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm p-4">
+          <div className="relative w-full max-w-2xl max-h-[90vh] overflow-y-auto rounded-3xl border border-white/10 bg-background p-6 shadow-2xl">
+            <div className="flex items-center justify-between mb-4">
+              <div>
+                <h2 className="text-xl font-semibold">Create a goal</h2>
+                <p className="text-sm text-muted-foreground">Track a future purchase, buffer, or business upgrade.</p>
+              </div>
+              <Button type="button" variant="ghost" onClick={() => setIsGoalComposerOpen(false)}>
+                Close
+              </Button>
+            </div>
+
+            {goalComposerError && (
+              <div className="mb-4 rounded-2xl border border-red-400/40 bg-red-500/10 px-4 py-2 text-sm text-red-300">
+                {goalComposerError}
+              </div>
+            )}
+
+            <form className="space-y-6" onSubmit={handleGoalSubmit}>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div>
+                  <label className="text-sm font-medium text-muted-foreground mb-2 block">Goal title</label>
+                  <Input
+                    value={goalComposer.title}
+                    onChange={(event) => handleGoalComposerChange('title', event.target.value)}
+                    placeholder="Gift fund, iPad upgrade, tax buffer"
+                    required
+                  />
+                </div>
+                <div>
+                  <label className="text-sm font-medium text-muted-foreground mb-2 block">Category / theme</label>
+                  <Input
+                    value={goalComposer.category}
+                    onChange={(event) => handleGoalComposerChange('category', event.target.value)}
+                    placeholder="Lifestyle, business, emergency"
+                  />
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div>
+                  <label className="text-sm font-medium text-muted-foreground mb-2 block">Target amount (INR)</label>
+                  <Input
+                    type="number"
+                    min="0"
+                    step="1000"
+                    value={goalComposer.targetAmount}
+                    onChange={(event) => handleGoalComposerChange('targetAmount', event.target.value)}
+                    placeholder="600000"
+                    required
+                  />
+                </div>
+                <div>
+                  <label className="text-sm font-medium text-muted-foreground mb-2 block">Target date</label>
+                  <Input
+                    type="date"
+                    value={goalComposer.deadline}
+                    onChange={(event) => handleGoalComposerChange('deadline', event.target.value)}
+                  />
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                <div>
+                  <label className="text-sm font-medium text-muted-foreground mb-2 block">Priority</label>
+                  <select
+                    value={goalComposer.priority}
+                    onChange={(event) => handleGoalComposerChange('priority', event.target.value)}
+                    className="w-full rounded-2xl border border-white/10 bg-transparent px-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-theme-green/40"
+                  >
+                    <option value="high">High focus</option>
+                    <option value="medium">Balanced</option>
+                    <option value="low">Nice to have</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="text-sm font-medium text-muted-foreground mb-2 block">Status</label>
+                  <select
+                    value={goalComposer.status}
+                    onChange={(event) => handleGoalComposerChange('status', event.target.value)}
+                    className="w-full rounded-2xl border border-white/10 bg-transparent px-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-theme-green/40"
+                  >
+                    <option value="active">Active</option>
+                    <option value="paused">Paused</option>
+                    <option value="achieved">Achieved</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="text-sm font-medium text-muted-foreground mb-2 block">Monthly contribution</label>
+                  <Input
+                    type="number"
+                    min="0"
+                    step="500"
+                    value={goalComposer.monthlyContribution}
+                    onChange={(event) => handleGoalComposerChange('monthlyContribution', event.target.value)}
+                    placeholder="15000"
+                  />
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div>
+                  <label className="text-sm font-medium text-muted-foreground mb-2 block">Tags (comma separated)</label>
+                  <Input
+                    value={goalComposer.tags}
+                    onChange={(event) => handleGoalComposerChange('tags', event.target.value)}
+                    placeholder="vacation, family, upgrade"
+                  />
+                </div>
+                <div>
+                  <label className="text-sm font-medium text-muted-foreground mb-2 block">Notes</label>
+                  <textarea
+                    value={goalComposer.notes}
+                    onChange={(event) => handleGoalComposerChange('notes', event.target.value)}
+                    className="w-full rounded-2xl border border-white/10 bg-transparent px-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-theme-green/40"
+                    rows={3}
+                    placeholder="Add context for the coach, e.g., why this goal matters."
+                  />
+                </div>
+              </div>
+
+              <div className="flex flex-col md:flex-row md:items-center md:justify-end gap-3">
+                <Button type="submit" disabled={isSavingGoal} className="flex-1 md:flex-none">
+                  {isSavingGoal ? 'Saving...' : 'Save goal'}
+                </Button>
+                <Button type="button" variant="ghost" onClick={resetGoalComposer}>
+                  Clear
+                </Button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
     </div>
   )
 }

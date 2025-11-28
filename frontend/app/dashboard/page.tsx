@@ -1,7 +1,8 @@
 'use client'
 
-import { useEffect, useMemo, useState } from 'react'
+import { FormEvent, useCallback, useEffect, useMemo, useState } from 'react'
 import Link from 'next/link'
+import { useRouter } from 'next/navigation'
 import { motion } from 'framer-motion'
 import {
   AlertTriangle,
@@ -24,10 +25,19 @@ import {
 } from 'lucide-react'
 
 import { HeartbeatPulse } from '@/components/dashboard/HeartbeatPulse'
-import { fetchDashboardHighlights, fetchFinancialPulse, fetchGoals, fetchTransactions } from '@/lib/api'
+import {
+  createGoal,
+  createTransaction,
+  fetchDashboardHighlights,
+  fetchFinancialPulse,
+  fetchGoals,
+  fetchTransactions,
+} from '@/lib/api'
+import { Button } from '@/components/ui/button'
+import { Input } from '@/components/ui/input'
 import { formatCurrency } from '@/lib/utils'
 import { useUserStore } from '@/store/useUserStore'
-import type { ActionItemKind, DashboardHighlights } from '@/types'
+import type { ActionItemKind, DashboardHighlights, TransactionType } from '@/types'
 
 const PLACEHOLDER = '__'
 const SAVINGS_GOAL = 30000
@@ -36,6 +46,26 @@ type MonthlySeriesPoint = {
   month: string
   income: number
   expense: number
+}
+
+type DashboardTransactionForm = {
+  type: TransactionType
+  amount: string
+  description: string
+  category: string
+  date: string
+  ledgerStatus: 'unreconciled' | 'pending' | 'cleared'
+  scheduled: boolean
+  scheduledDate: string
+}
+
+type DashboardGoalForm = {
+  title: string
+  targetAmount: string
+  deadline: string
+  category: string
+  priority: 'high' | 'medium' | 'low'
+  notes: string
 }
 
 const fallbackGoalSnapshots = [
@@ -67,6 +97,26 @@ const formatChangeValue = (value: number | null | undefined) => {
   return `${prefix}${formatCurrency(absValue)}`
 }
 
+const createDefaultTransactionForm = (): DashboardTransactionForm => ({
+  type: 'expense',
+  amount: '',
+  description: '',
+  category: '',
+  date: new Date().toISOString().split('T')[0],
+  ledgerStatus: 'unreconciled',
+  scheduled: false,
+  scheduledDate: '',
+})
+
+const createDefaultGoalForm = (): DashboardGoalForm => ({
+  title: '',
+  targetAmount: '',
+  deadline: '',
+  category: '',
+  priority: 'medium',
+  notes: '',
+})
+
 export default function DashboardPage() {
   const [greeting, setGreeting] = useState('Hello')
   const [currentTime, setCurrentTime] = useState<Date | null>(null)
@@ -82,6 +132,15 @@ export default function DashboardPage() {
     { id: 6, name: 'Check goal progress', icon: Target, completed: false, streak: 13 },
   ])
   const [dashboardHighlights, setDashboardHighlights] = useState<DashboardHighlights | null>(null)
+  const router = useRouter()
+  const [showTransactionModal, setShowTransactionModal] = useState(false)
+  const [transactionForm, setTransactionForm] = useState<DashboardTransactionForm>(createDefaultTransactionForm())
+  const [transactionSaving, setTransactionSaving] = useState(false)
+  const [transactionError, setTransactionError] = useState<string | null>(null)
+  const [showGoalModal, setShowGoalModal] = useState(false)
+  const [goalForm, setGoalForm] = useState<DashboardGoalForm>(createDefaultGoalForm())
+  const [goalSaving, setGoalSaving] = useState(false)
+  const [goalError, setGoalError] = useState<string | null>(null)
 
   const user = useUserStore((state) => state.user)
   const transactions = useUserStore((state) => state.transactions)
@@ -90,6 +149,8 @@ export default function DashboardPage() {
   const setGoals = useUserStore((state) => state.setGoals)
   const financialPulse = useUserStore((state) => state.financialPulse)
   const setFinancialPulse = useUserStore((state) => state.setFinancialPulse)
+  const addTransactionToStore = useUserStore((state) => state.addTransaction)
+  const addGoalToStore = useUserStore((state) => state.addGoal)
   const actionIconMap: Record<ActionItemKind, typeof ReceiptText> = {
     transaction: ReceiptText,
     invoice: FileSpreadsheet,
@@ -116,19 +177,17 @@ export default function DashboardPage() {
     setCurrentTime(now)
   }, [])
 
-  useEffect(() => {
-    if (!user?.id) return
-    const controller = new AbortController()
-
-    const loadDashboardData = async () => {
+  const loadDashboardData = useCallback(
+    async (options?: { signal?: AbortSignal }) => {
+      if (!user?.id) return
       setFetchError(null)
       setIsFetchingData(true)
       try {
         const [txnData, pulseData, goalData, highlightData] = await Promise.all([
-          fetchTransactions(user.id, { signal: controller.signal }),
-          fetchFinancialPulse(user.id, { signal: controller.signal }),
-          fetchGoals(user.id, { signal: controller.signal }),
-          fetchDashboardHighlights(user.id, { signal: controller.signal }),
+          fetchTransactions(user.id, { signal: options?.signal }),
+          fetchFinancialPulse(user.id, { signal: options?.signal }),
+          fetchGoals(user.id, { signal: options?.signal }),
+          fetchDashboardHighlights(user.id, { signal: options?.signal }),
         ])
         setTransactions(txnData)
         setFinancialPulse(pulseData)
@@ -139,15 +198,109 @@ export default function DashboardPage() {
           setFetchError(error instanceof Error ? error.message : 'Failed to load dashboard data')
         }
       } finally {
-        if (!controller.signal.aborted) {
+        if (!options?.signal || !options.signal.aborted) {
           setIsFetchingData(false)
         }
       }
+    },
+    [user?.id, setTransactions, setFinancialPulse, setGoals, setDashboardHighlights],
+  )
+
+  useEffect(() => {
+    if (!user?.id) return
+    const controller = new AbortController()
+    loadDashboardData({ signal: controller.signal })
+    return () => controller.abort()
+  }, [user?.id, loadDashboardData])
+
+  const handleTransactionFormChange = (field: keyof DashboardTransactionForm, value: string | boolean) => {
+    setTransactionForm((prev) => ({ ...prev, [field]: value }))
+  }
+
+  const handleTransactionSubmit = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault()
+    if (!user?.id) {
+      setTransactionError('Sign in to log cashflow.')
+      return
+    }
+    const amountValue = Number(transactionForm.amount)
+    if (!amountValue || Number.isNaN(amountValue) || amountValue <= 0) {
+      setTransactionError('Enter a valid amount.')
+      return
+    }
+    if (!transactionForm.date) {
+      setTransactionError('Pick a booking date.')
+      return
     }
 
-    loadDashboardData()
-    return () => controller.abort()
-  }, [user?.id, setTransactions, setFinancialPulse, setGoals, setDashboardHighlights])
+    setTransactionError(null)
+    setTransactionSaving(true)
+    try {
+      const payload: Parameters<typeof createTransaction>[1] = {
+        type: transactionForm.type,
+        amount: amountValue,
+        description: transactionForm.description || undefined,
+        category: transactionForm.category || undefined,
+        date: transactionForm.date,
+        ledger_status: transactionForm.ledgerStatus,
+      }
+      if (transactionForm.scheduled && transactionForm.scheduledDate) {
+        payload.scheduled_for = transactionForm.scheduledDate
+      }
+      const created = await createTransaction(user.id, payload)
+      addTransactionToStore(created)
+      await loadDashboardData()
+      setShowTransactionModal(false)
+      setTransactionForm(createDefaultTransactionForm())
+    } catch (error) {
+      setTransactionError(error instanceof Error ? error.message : 'Unable to log transaction.')
+    } finally {
+      setTransactionSaving(false)
+    }
+  }
+
+  const handleGoalFormChange = (field: keyof DashboardGoalForm, value: string) => {
+    setGoalForm((prev) => ({ ...prev, [field]: value }))
+  }
+
+  const handleGoalSubmit = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault()
+    if (!user?.id) {
+      setGoalError('Sign in to add a goal.')
+      return
+    }
+    const amountValue = Number(goalForm.targetAmount)
+    if (!goalForm.title.trim()) {
+      setGoalError('Name the goal first.')
+      return
+    }
+    if (!amountValue || Number.isNaN(amountValue) || amountValue <= 0) {
+      setGoalError('Target amount must be greater than zero.')
+      return
+    }
+
+    setGoalError(null)
+    setGoalSaving(true)
+    try {
+      const payload: Parameters<typeof createGoal>[1] = {
+        title: goalForm.title.trim(),
+        target_amount: amountValue,
+        deadline: goalForm.deadline || undefined,
+        category: goalForm.category || undefined,
+        priority: goalForm.priority,
+        notes: goalForm.notes || undefined,
+      }
+      const created = await createGoal(user.id, payload)
+      addGoalToStore(created)
+      await loadDashboardData()
+      setShowGoalModal(false)
+      setGoalForm(createDefaultGoalForm())
+    } catch (error) {
+      setGoalError(error instanceof Error ? error.message : 'Unable to create goal.')
+    } finally {
+      setGoalSaving(false)
+    }
+  }
 
   const financialTransactions = useMemo(() => transactions.filter((txn) => txn.type !== 'transfer'), [transactions])
 
@@ -416,8 +569,9 @@ export default function DashboardPage() {
     emergencyStatus.nextTopUp !== null ? formatCurrency(emergencyStatus.nextTopUp) : 'Add savings data'
 
   return (
-    <div className="min-h-screen p-4 md:p-6 lg:ml-[280px] lg:p-8">
-      <div className="max-w-7xl mx-auto space-y-6">
+    <div className="relative">
+      <div className="min-h-screen p-4 md:p-6 lg:ml-[280px] lg:p-8">
+        <div className="max-w-7xl mx-auto space-y-6">
         <motion.div
           initial={{ y: -20, opacity: 0 }}
           animate={{ y: 0, opacity: 1 }}
@@ -815,12 +969,19 @@ export default function DashboardPage() {
               transition={{ duration: 0.5, delay: 0.25 }}
               className="neuro-card rounded-3xl p-6"
             >
-              <div className="flex items-center justify-between mb-4">
+              <div className="flex items-center justify-between mb-4 gap-3">
                 <div>
                   <h3 className="text-lg font-semibold">Next 2 Weeks</h3>
                   <p className="text-sm text-muted-foreground">Cash-ins & obligations coming up</p>
                 </div>
-                <Calendar className="w-5 h-5 text-theme-green" />
+                <div className="flex items-center gap-2">
+                  <Button size="sm" variant="secondary" onClick={() => setShowTransactionModal(true)}>
+                    Log cash event
+                  </Button>
+                  <div className="w-10 h-10 rounded-full bg-white/5 flex items-center justify-center">
+                    <Calendar className="w-5 h-5 text-theme-green" />
+                  </div>
+                </div>
               </div>
               <div className="space-y-4">
                 {upcomingEvents.length ? (
@@ -913,7 +1074,11 @@ export default function DashboardPage() {
                     <p className="text-sm font-semibold">{coachHighlight.headline}</p>
                     <p className="text-sm text-muted-foreground mt-1">{coachHighlight.message}</p>
                   </div>
-                  <button className="inline-flex items-center gap-2 text-xs font-medium text-theme-green hover:underline transition">
+                  <button
+                    type="button"
+                    onClick={() => router.push('/chat')}
+                    className="inline-flex items-center gap-2 text-xs font-medium text-theme-green hover:underline transition"
+                  >
                     {coachHighlight.action}
                     <ArrowUpRight className="w-3 h-3" />
                   </button>
@@ -1024,6 +1189,231 @@ export default function DashboardPage() {
           )}
         </motion.div>
       </div>
+    </div>
+    {showTransactionModal && (
+      <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm p-4">
+        <div className="relative w-full max-w-2xl max-h-[90vh] overflow-y-auto rounded-3xl border border-white/10 bg-background p-6 shadow-2xl">
+          <div className="flex items-center justify-between mb-4">
+            <div>
+              <h2 className="text-xl font-semibold">Log a transaction</h2>
+              <p className="text-sm text-muted-foreground">Add a missing cash event or schedule an upcoming one.</p>
+            </div>
+            <Button type="button" variant="ghost" onClick={() => setShowTransactionModal(false)}>
+              Close
+            </Button>
+          </div>
+          {transactionError && (
+            <div className="mb-4 rounded-2xl border border-red-400/40 bg-red-500/10 px-4 py-2 text-sm text-red-300">
+              {transactionError}
+            </div>
+          )}
+          <form className="space-y-6" onSubmit={handleTransactionSubmit}>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div>
+                <label className="text-sm font-medium text-muted-foreground mb-2 block">Amount</label>
+                <Input
+                  type="number"
+                  min="0"
+                  step="0.01"
+                  value={transactionForm.amount}
+                  onChange={(event) => handleTransactionFormChange('amount', event.target.value)}
+                  placeholder="Enter amount in INR"
+                  required
+                />
+              </div>
+              <div>
+                <label className="text-sm font-medium text-muted-foreground mb-2 block">Type</label>
+                <div className="flex gap-2 flex-wrap">
+                  {(['expense', 'income', 'transfer'] as TransactionType[]).map((type) => (
+                    <button
+                      key={type}
+                      type="button"
+                      onClick={() => handleTransactionFormChange('type', type)}
+                      className={`px-4 py-2 rounded-full border text-xs ${
+                        transactionForm.type === type
+                          ? 'border-theme-green text-theme-green'
+                          : 'border-white/10 text-muted-foreground'
+                      }`}
+                    >
+                      {type.charAt(0).toUpperCase() + type.slice(1)}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div>
+                <label className="text-sm font-medium text-muted-foreground mb-2 block">Description</label>
+                <Input
+                  value={transactionForm.description}
+                  onChange={(event) => handleTransactionFormChange('description', event.target.value)}
+                  placeholder="Client retainer or rent"
+                />
+              </div>
+              <div>
+                <label className="text-sm font-medium text-muted-foreground mb-2 block">Category</label>
+                <Input
+                  value={transactionForm.category}
+                  onChange={(event) => handleTransactionFormChange('category', event.target.value)}
+                  placeholder="Workspace, subscription..."
+                />
+              </div>
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div>
+                <label className="text-sm font-medium text-muted-foreground mb-2 block">Booking date</label>
+                <Input
+                  type="date"
+                  value={transactionForm.date}
+                  onChange={(event) => handleTransactionFormChange('date', event.target.value)}
+                  required
+                />
+              </div>
+              <div>
+                <label className="text-sm font-medium text-muted-foreground mb-2 block">Ledger status</label>
+                <select
+                  value={transactionForm.ledgerStatus}
+                  onChange={(event) => handleTransactionFormChange('ledgerStatus', event.target.value)}
+                  className="w-full rounded-2xl border border-white/10 bg-transparent px-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-theme-green/40"
+                >
+                  <option value="unreconciled">Unreconciled</option>
+                  <option value="pending">Pending</option>
+                  <option value="cleared">Cleared</option>
+                </select>
+              </div>
+            </div>
+
+            <div className="space-y-2">
+              <label className="flex items-center gap-3 text-sm text-muted-foreground">
+                <input
+                  type="checkbox"
+                  checked={transactionForm.scheduled}
+                  onChange={(event) => handleTransactionFormChange('scheduled', event.target.checked)}
+                />
+                Future-dated?
+              </label>
+              {transactionForm.scheduled && (
+                <Input
+                  type="date"
+                  value={transactionForm.scheduledDate}
+                  onChange={(event) => handleTransactionFormChange('scheduledDate', event.target.value)}
+                  required
+                />
+              )}
+            </div>
+
+            <div className="flex flex-col md:flex-row md:items-center md:justify-end gap-3">
+              <Button type="submit" disabled={transactionSaving} className="flex-1 md:flex-none">
+                {transactionSaving ? 'Saving...' : 'Save transaction'}
+              </Button>
+              <Button type="button" variant="ghost" onClick={() => setTransactionForm(createDefaultTransactionForm())}>
+                Clear
+              </Button>
+            </div>
+          </form>
+        </div>
+      </div>
+    )}
+    {showGoalModal && (
+      <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm p-4">
+        <div className="relative w-full max-w-2xl max-h-[90vh] overflow-y-auto rounded-3xl border border-white/10 bg-background p-6 shadow-2xl">
+          <div className="flex items-center justify-between mb-4">
+            <div>
+              <h2 className="text-xl font-semibold">Create a goal</h2>
+              <p className="text-sm text-muted-foreground">Track a new milestone without leaving the dashboard.</p>
+            </div>
+            <Button type="button" variant="ghost" onClick={() => setShowGoalModal(false)}>
+              Close
+            </Button>
+          </div>
+          {goalError && (
+            <div className="mb-4 rounded-2xl border border-red-400/40 bg-red-500/10 px-4 py-2 text-sm text-red-300">
+              {goalError}
+            </div>
+          )}
+          <form className="space-y-6" onSubmit={handleGoalSubmit}>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div>
+                <label className="text-sm font-medium text-muted-foreground mb-2 block">Goal title</label>
+                <Input
+                  value={goalForm.title}
+                  onChange={(event) => handleGoalFormChange('title', event.target.value)}
+                  placeholder="Emergency buffer, upgrade, tax reserve..."
+                  required
+                />
+              </div>
+              <div>
+                <label className="text-sm font-medium text-muted-foreground mb-2 block">Category</label>
+                <Input
+                  value={goalForm.category}
+                  onChange={(event) => handleGoalFormChange('category', event.target.value)}
+                  placeholder="Lifestyle, business, safety"
+                />
+              </div>
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div>
+                <label className="text-sm font-medium text-muted-foreground mb-2 block">Target amount (INR)</label>
+                <Input
+                  type="number"
+                  min="0"
+                  step="1000"
+                  value={goalForm.targetAmount}
+                  onChange={(event) => handleGoalFormChange('targetAmount', event.target.value)}
+                  placeholder="600000"
+                  required
+                />
+              </div>
+              <div>
+                <label className="text-sm font-medium text-muted-foreground mb-2 block">Target date</label>
+                <Input
+                  type="date"
+                  value={goalForm.deadline}
+                  onChange={(event) => handleGoalFormChange('deadline', event.target.value)}
+                />
+              </div>
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div>
+                <label className="text-sm font-medium text-muted-foreground mb-2 block">Priority</label>
+                <select
+                  value={goalForm.priority}
+                  onChange={(event) => handleGoalFormChange('priority', event.target.value)}
+                  className="w-full rounded-2xl border border-white/10 bg-transparent px-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-theme-green/40"
+                >
+                  <option value="high">High focus</option>
+                  <option value="medium">Balanced</option>
+                  <option value="low">Nice to have</option>
+                </select>
+              </div>
+              <div>
+                <label className="text-sm font-medium text-muted-foreground mb-2 block">Notes</label>
+                <textarea
+                  value={goalForm.notes}
+                  onChange={(event) => handleGoalFormChange('notes', event.target.value)}
+                  className="w-full rounded-2xl border border-white/10 bg-transparent px-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-theme-green/40"
+                  rows={3}
+                  placeholder="Add reminders or reasoning for future you."
+                />
+              </div>
+            </div>
+
+            <div className="flex flex-col md:flex-row md:items-center md:justify-end gap-3">
+              <Button type="submit" disabled={goalSaving} className="flex-1 md:flex-none">
+                {goalSaving ? 'Saving...' : 'Save goal'}
+              </Button>
+              <Button type="button" variant="ghost" onClick={() => setGoalForm(createDefaultGoalForm())}>
+                Clear
+              </Button>
+            </div>
+          </form>
+        </div>
+      </div>
+    )}
     </div>
   )
 }

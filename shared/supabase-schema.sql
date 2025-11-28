@@ -1,3 +1,5 @@
+create extension if not exists vector;
+
 -- Core users + profiles ------------------------------------------------------
 create table if not exists public.users (
   id uuid primary key,
@@ -323,3 +325,21 @@ create table if not exists public.whatsapp_nudges (
   sent_at timestamptz default now(),
   status text check (status in ('sent','delivered','read','failed')) default 'sent'
 );
+
+-- Agent memory ---------------------------------------------------------------
+create table if not exists public.agent_memories (
+  id uuid primary key default gen_random_uuid(),
+  user_id uuid references public.users(id) on delete cascade,
+  topic text,
+  content text not null,
+  embedding vector(1536),
+  metadata jsonb,
+  created_at timestamptz default now()
+);
+
+create index if not exists agent_memories_user_idx
+  on public.agent_memories(user_id);
+
+create index if not exists agent_memories_embedding_idx
+  on public.agent_memories
+  using ivfflat (embedding vector_cosine_ops) with (lists = 100);

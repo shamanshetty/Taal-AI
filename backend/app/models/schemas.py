@@ -103,10 +103,17 @@ class FinancialPulseResponse(BaseModel):
     insights: list
 
 # Chat Schemas
+class ChatHistoryItem(BaseModel):
+    role: Literal["user", "assistant"]
+    content: str
+
+
 class ChatRequest(BaseModel):
     message: str
     use_voice: bool = False
     language: str = "en"
+    history: List[ChatHistoryItem] = Field(default_factory=list)
+    persist_memories: bool = False
 
 class ChatResponse(BaseModel):
     response: str

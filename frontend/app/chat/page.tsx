@@ -49,21 +49,11 @@ const VOICE_TIPS = [
   'TaalAI can summarise the reply and send an audio note.',
 ]
 
-const getFallbackResponse = (userInput: string) => {
-  const trimmed = userInput.trim()
-  if (!trimmed) {
-    return "I'm syncing data right now. Give me a fuller question and I'll jump back in."
-  }
-  return `I ran into a glitch responding to "${trimmed}". Give me a moment and try again.`
-}
-
 export default function ChatPage() {
   const [messages, setMessages] = useState<Message[]>([])
   const [input, setInput] = useState('')
   const [isLoading, setIsLoading] = useState(false)
   const [isVoiceMode, setIsVoiceMode] = useState(false)
-  const [dailyNudge, setDailyNudge] = useState<string | null>(null)
-  const [isFetchingNudge, setIsFetchingNudge] = useState(false)
   const [errorMessage, setErrorMessage] = useState<string | null>(null)
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const user = useUserStore((state) => state.user)
@@ -80,44 +70,6 @@ export default function ChatPage() {
     scrollToBottom()
   }, [messages])
 
-  useEffect(() => {
-    if (!user?.id) {
-      setDailyNudge(null)
-      return
-    }
-    const controller = new AbortController()
-
-    const loadNudge = async () => {
-      setIsFetchingNudge(true)
-      try {
-        const apiBase = process.env.NEXT_PUBLIC_API_URL
-        if (!apiBase) {
-          throw new Error('Chat service not configured. Set NEXT_PUBLIC_API_URL in your environment.')
-        }
-        const response = await fetch(`${apiBase}/api/chat/daily-nudge?user_id=${encodeURIComponent(user.id)}`, {
-          signal: controller.signal,
-        })
-        if (!response.ok) {
-          const detail = await response.json().catch(() => ({}))
-          throw new Error(detail?.detail || response.statusText || 'Unable to load nudge')
-        }
-        const data = await response.json()
-        setDailyNudge(typeof data.nudge === 'string' ? data.nudge : null)
-      } catch (error) {
-        if (!(error instanceof DOMException && error.name === 'AbortError')) {
-          setDailyNudge(null)
-        }
-      } finally {
-        if (!controller.signal.aborted) {
-          setIsFetchingNudge(false)
-        }
-      }
-    }
-
-    loadNudge()
-    return () => controller.abort()
-  }, [user?.id])
-
   const handleSend = async () => {
     if (!input.trim()) return
     if (!user?.id) {
@@ -132,17 +84,24 @@ export default function ChatPage() {
       timestamp: new Date(),
     }
 
-    setMessages([...messages, userMessage])
+    const historyPayload = messages.map((message) => ({
+      role: message.role,
+      content: message.content,
+    }))
+
+    setMessages((prev) => [...prev, userMessage])
     setInput('')
     setErrorMessage(null)
     setIsLoading(true)
 
-    try {
-      const apiBase = process.env.NEXT_PUBLIC_API_URL
-      if (!apiBase) {
-        throw new Error('Chat service not configured. Set NEXT_PUBLIC_API_URL in your environment.')
-      }
+    const apiBase = process.env.NEXT_PUBLIC_API_URL
+    if (!apiBase) {
+      setErrorMessage('Chat service not configured. Set NEXT_PUBLIC_API_URL in your environment.')
+      setIsLoading(false)
+      return
+    }
 
+    try {
       const response = await fetch(`${apiBase}/api/chat/message?user_id=${encodeURIComponent(user.id)}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -150,6 +109,7 @@ export default function ChatPage() {
           message: input,
           use_voice: isVoiceMode,
           language: 'hinglish',
+          history: historyPayload,
         }),
       })
 
@@ -164,7 +124,7 @@ export default function ChatPage() {
       const assistantMessage: Message = {
         id: (Date.now() + 1).toString(),
         role: 'assistant',
-        content: data.response || getFallbackResponse(input),
+        content: data.response || "I'm syncing data right now. Give me a fuller question and I'll jump back in.",
         timestamp: data.timestamp ? new Date(data.timestamp) : new Date(),
       }
 
@@ -180,7 +140,6 @@ export default function ChatPage() {
         timestamp: new Date(),
       }
       setMessages((prev) => [...prev, assistantMessage])
-      setErrorMessage(error instanceof Error ? error.message : 'Unable to send your message.')
     } finally {
       setIsLoading(false)
     }
@@ -233,21 +192,6 @@ export default function ChatPage() {
             {errorMessage}
           </div>
         )}
-
-        <motion.div
-          initial={{ opacity: 0, y: 10 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.4, delay: 0.1 }}
-          className="neuro-card rounded-2xl p-4 flex items-center justify-between"
-        >
-          <div>
-            <p className="text-xs text-muted-foreground">Daily nudge</p>
-            <p className="text-base font-medium mt-1">
-              {dailyNudge || (isFetchingNudge ? 'Fetching today’s suggestion…' : 'Add profile data to unlock nudges.')}
-            </p>
-          </div>
-          <Sparkles className="w-5 h-5 text-theme-green" />
-        </motion.div>
 
         {/* Messages */}
         <motion.div

@@ -13,8 +13,10 @@ from sqlalchemy import (
     Text,
     text,
 )
-from sqlalchemy.dialects.postgresql import ARRAY, UUID
+from sqlalchemy.dialects.postgresql import ARRAY, JSONB, UUID
 from sqlalchemy.orm import relationship
+
+from pgvector.sqlalchemy import Vector
 
 from app.db import Base
 
@@ -42,6 +44,7 @@ class User(Base):
     clients = relationship("Client", back_populates="user", cascade="all, delete-orphan")
     invoices = relationship("Invoice", back_populates="user", cascade="all, delete-orphan")
     compliance_tasks = relationship("ComplianceTask", back_populates="user", cascade="all, delete-orphan")
+    agent_memories = relationship("AgentMemory", back_populates="user", cascade="all, delete-orphan")
 
 
 class IncomeSource(Base):
@@ -274,3 +277,18 @@ class WhatsAppNudge(Base):
     )
 
     user = relationship("User", back_populates="whatsapp_nudges")
+
+
+class AgentMemory(Base):
+    __tablename__ = "agent_memories"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, server_default=text("gen_random_uuid()"))
+    user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    topic = Column(Text)
+    content = Column(Text, nullable=False)
+    embedding = Column(Vector(1536))
+    meta = Column("metadata", JSONB)
+    created_at = Column(DateTime(timezone=True), server_default=text("NOW()"))
+
+    user = relationship("User", back_populates="agent_memories")
+
